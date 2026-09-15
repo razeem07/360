@@ -1,0 +1,37 @@
+{% load static %}<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}360-Algo{% endblock %}</title>
+    <link rel="stylesheet" href="{% static 'css/style.css' %}">
+</head>
+<body>
+    {% if user.is_authenticated %}
+    <header class="topbar">
+        <div class="brand">360-Algo</div>
+        <nav class="nav-links">
+            <a href="{% url 'core:dashboard' %}">Dashboard</a>
+            <span style="color: var(--text-muted)">Market</span>
+            <span style="color: var(--text-muted)">Stock Scanner</span>
+            <a href="{% url 'marketdata:stock_analysis' %}">Stock Analysis</a>
+            <span style="color: var(--text-muted)">Strategies</span>
+            <span style="color: var(--text-muted)">Backtesting</span>
+            <span style="color: var(--text-muted)">Paper Trading</span>
+            <span style="color: var(--text-muted)">Portfolio</span>
+            <span style="color: var(--text-muted)">Reports</span>
+        </nav>
+        <div style="display:flex; align-items:center; gap:0.75rem;">
+            <span class="mode-badge {{ trading_mode }}">{{ trading_mode }}</span>
+            <form method="post" action="{% url 'core:logout' %}">
+                {% csrf_token %}
+                <button type="submit" style="width:auto; padding:0.35rem 0.75rem;">Logout</button>
+            </form>
+        </div>
+    </header>
+    {% endif %}
+    <main class="page">
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

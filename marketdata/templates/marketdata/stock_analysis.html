@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Stock Analysis · 360-Algo{% endblock %}
+{% block content %}
+
+<form method="get" style="margin-bottom: 1rem; display:flex; align-items:center; gap:0.75rem;">
+    <label for="symbol" style="color: var(--text-muted); font-size: 0.85rem;">Stock</label>
+    <select name="symbol" id="symbol" onchange="this.form.submit()"
+            style="background: var(--bg-elevated); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 0.4rem 0.6rem;">
+        {% for inst in instruments %}
+        <option value="{{ inst.internal_id }}" {% if selected_instrument and inst.internal_id == selected_instrument.internal_id %}selected{% endif %}>
+            {{ inst.symbol }} — {{ inst.name }}
+        </option>
+        {% endfor %}
+    </select>
+</form>
+
+{% if not selected_instrument %}
+<div class="card"><p class="desc">No instruments seeded yet. Run <code>python manage.py seed_instruments</code>.</p></div>
+{% elif not analysis.has_data %}
+<div class="card">
+    <h3>{{ selected_instrument.symbol }} — {{ selected_instrument.name }}</h3>
+    <div class="placeholder">
+        No candles ingested for this instrument yet. Run
+        <code>python manage.py ingest_candles --symbols {{ selected_instrument.internal_id }}</code>.
+    </div>
+</div>
+{% else %}
+
+<div class="card" style="margin-bottom: 1rem;">
+    <h3>{{ selected_instrument.symbol }} — {{ selected_instrument.name }}</h3>
+    <p class="desc">
+        {{ selected_instrument.exchange }}
+        {% if selected_instrument.sector %}· {{ selected_instrument.sector }}{% endif %}
+        · {{ timeframe }} · {{ analysis.bar_count }} bars
+    </p>
+    <div id="chart" style="width: 100%; height: 420px;"></div>
+</div>
+
+<div class="card-grid">
+    <div class="card">
+        <h3>OHLCV (latest)</h3>
+        <div class="placeholder" style="text-align:left;">
+            Close: {{ analysis.latest_close|floatformat:2 }}<br>
+            Volume: {{ analysis.latest_volume }}
+        </div>
+    </div>
+    <div class="card">
+        <h3>Trend</h3>
+        <div class="placeholder" style="text-align:left;">
+            {{ analysis.trend }}<br>
+            SMA20: {{ analysis.sma20|default:"—"|floatformat:2 }} ·
+            SMA50: {{ analysis.sma50|default:"—"|floatformat:2 }} ·
+            EMA50: {{ analysis.ema50|default:"—"|floatformat:2 }}
+        </div>
+    </div>
+    <div class="card">
+        <h3>RSI(14) / ATR(14)</h3>
+        <div class="placeholder" style="text-align:left;">
+            RSI: {{ analysis.rsi14|default:"—"|floatformat:1 }}<br>
+            ATR: {{ analysis.atr14|default:"—"|floatformat:2 }}
+        </div>
+    </div>
+    <div class="card">
+        <h3>MACD(12,26,9)</h3>
+        <div class="placeholder" style="text-align:left;">
+            MACD: {{ analysis.macd_line|default:"—"|floatformat:2 }}<br>
+            Signal: {{ analysis.macd_signal|default:"—"|floatformat:2 }}<br>
+            Hist: {{ analysis.macd_histogram|default:"—"|floatformat:2 }}
+        </div>
+    </div>
+    <div class="card">
+        <h3>Support / Resistance</h3>
+        <div class="placeholder" style="text-align:left;">
+            Resistance: {% for r in analysis.resistance %}{{ r|floatformat:2 }}{% if not forloop.last %}, {% endif %}{% empty %}—{% endfor %}<br>
+            Support: {% for s in analysis.support %}{{ s|floatformat:2 }}{% if not forloop.last %}, {% endif %}{% empty %}—{% endfor %}
+        </div>
+    </div>
+    <div class="card">
+        <h3>Relative Strength (20d vs NIFTY 50)</h3>
+        <div class="placeholder" style="text-align:left;">
+            {% if analysis.relative_strength is not None %}
+                {{ analysis.relative_strength|floatformat:2 }} pts
+            {% else %}
+                {{ analysis.relative_strength_note }}
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script src="{% static 'vendor/lightweight-charts/lightweight-charts.standalone.production.js' %}"></script>
+<script src="{% static 'js/stock_analysis.js' %}"
+        data-candle-api="{% url 'marketdata:candle_api' internal_id=selected_instrument.internal_id %}?timeframe={{ timeframe }}"></script>
+{% endif %}
+
+{% endblock %}

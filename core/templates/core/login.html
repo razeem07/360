@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Login · 360-Algo{% endblock %}
+{% block content %}
+<div class="auth-wrap">
+    <div class="auth-box">
+        <h1>360-Algo</h1>
+        {% if form.errors %}
+        <ul class="errorlist"><li>Invalid username or password.</li></ul>
+        {% endif %}
+        <form method="post">
+            {% csrf_token %}
+            <div class="field">
+                <label for="id_username">Username</label>
+                <input type="text" name="username" id="id_username" autofocus required>
+            </div>
+            <div class="field">
+                <label for="id_password">Password</label>
+                <input type="password" name="password" id="id_password" required>
+            </div>
+            <input type="hidden" name="next" value="{{ next }}">
+            <button type="submit">Sign in</button>
+        </form>
+    </div>
+</div>
+{% endblock %}
