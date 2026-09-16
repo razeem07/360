@@ -21,11 +21,12 @@ Number = float
 
 
 class Bar(NamedTuple):
-    """Minimal OHLC bar for indicators that need more than the close price."""
+    """Minimal OHLC(V) bar for indicators that need more than the close price."""
 
     high: Number
     low: Number
     close: Number
+    volume: Number = 0.0
 
 
 def sma(closes: list[Number], period: int) -> list[Number | None]:
@@ -160,6 +161,26 @@ def support_resistance(bars: list[Bar], window: int = 5, lookback: int = 60, max
         support=list(reversed(pivot_lows[-max_levels:])),
         resistance=list(reversed(pivot_highs[-max_levels:])),
     )
+
+
+def rolling_vwap(bars: list[Bar], period: int = 20) -> list[Number | None]:
+    """
+    Rolling N-bar volume-weighted average price, using typical price
+    (high+low+close)/3. NOTE: classic VWAP resets every session and needs
+    intraday bars — we only ingest daily candles today, so this is a
+    rolling window over daily bars, not a true session VWAP. Labelled
+    "Rolling VWAP" everywhere it's shown so it isn't mistaken for the
+    intraday version.
+    """
+    out: list[Number | None] = [None] * len(bars)
+    for i in range(period - 1, len(bars)):
+        window = bars[i - period + 1 : i + 1]
+        total_volume = sum(b.volume for b in window)
+        if total_volume == 0:
+            continue
+        weighted_sum = sum(((b.high + b.low + b.close) / 3) * b.volume for b in window)
+        out[i] = weighted_sum / total_volume
+    return out
 
 
 TREND_UP = "uptrend"

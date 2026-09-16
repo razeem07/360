@@ -1,4 +1,5 @@
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone as dt_timezone
+from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
@@ -6,11 +7,12 @@ from django.urls import reverse
 from django.utils import timezone
 
 from . import indicators
-from .analysis import build_stock_analysis
+from .analysis import build_stock_analysis, get_bars
 from .broker.stub_adapter import StubAdapter
 from .constants import NIFTY50_INDEX_INTERNAL_ID
 from .indicators import Bar
-from .models import Candle, Instrument, InstrumentBrokerMapping
+from .models import Candle, Instrument, InstrumentBrokerMapping, WatchlistItem
+from .resampling import PlainBar, resample
 from .services import (
     InstrumentNotMapped,
     get_adapter,
@@ -131,6 +133,25 @@ class IndicatorsTest(TestCase):
         closes = [float(x) for x in range(100, 1, -1)]
         self.assertEqual(indicators.classify_trend(closes), indicators.TREND_DOWN)
 
+    def test_rolling_vwap_equals_average_price_when_volume_constant(self):
+        # Equal volume on every bar means VWAP collapses to a plain average
+        # of typical price ((h+l+c)/3), since the weights all cancel out.
+        bars = [Bar(high=101.0, low=99.0, close=100.0, volume=1000.0) for _ in range(25)]
+        result = indicators.rolling_vwap(bars, period=20)
+        self.assertIsNone(result[18])
+        self.assertAlmostEqual(result[19], 100.0, places=6)
+
+    def test_rolling_vwap_weights_toward_higher_volume_bars(self):
+        bars = [Bar(high=101.0, low=99.0, close=100.0, volume=1.0) for _ in range(19)]
+        bars.append(Bar(high=111.0, low=109.0, close=110.0, volume=1000.0))  # one huge-volume outlier
+        result = indicators.rolling_vwap(bars, period=20)
+        self.assertGreater(result[-1], 105)  # pulled well above the flat ~100 baseline
+
+    def test_rolling_vwap_handles_zero_volume_window(self):
+        bars = [Bar(high=101.0, low=99.0, close=100.0, volume=0.0) for _ in range(20)]
+        result = indicators.rolling_vwap(bars, period=20)
+        self.assertIsNone(result[-1])
+
 
 class StockAnalysisTest(TestCase):
     def _seed_candles(self, instrument, days=60, start_price=100.0, step=1.0, source="stub"):
@@ -208,3 +229,145 @@ class StockAnalysisViewTest(TestCase):
         url = reverse("marketdata:candle_api", kwargs={"internal_id": self.instrument.internal_id})
         response = self.client.get(url)
         self.assertEqual(response.status_code, 403)
+
+
+class ResamplingTest(TestCase):
+    """resampling.py is pure Python — no DB needed."""
+
+    def _daily(self, day, o, h, l, c, v):
+        return PlainBar(timestamp=datetime(2026, 1, day, tzinfo=dt_timezone.utc), open=o, high=h, low=l, close=c, volume=v)
+
+    def test_resample_weekly_aggregates_ohlcv_correctly(self):
+        # Mon 5th .. Fri 9th Jan 2026 is one ISO week.
+        daily = [
+            self._daily(5, 100, 105, 98, 102, 1000),
+            self._daily(6, 102, 110, 101, 108, 1100),
+            self._daily(7, 108, 109, 103, 104, 1200),
+            self._daily(8, 104, 106, 95, 96, 1300),
+            self._daily(9, 96, 100, 90, 99, 1400),
+        ]
+        weekly = resample(daily, "1w")
+        self.assertEqual(len(weekly), 1)
+        bar = weekly[0]
+        self.assertEqual(bar.open, 100)  # first day's open
+        self.assertEqual(bar.high, 110)  # max high across the week
+        self.assertEqual(bar.low, 90)    # min low across the week
+        self.assertEqual(bar.close, 99)  # last day's close
+        self.assertEqual(bar.volume, 6000)
+        self.assertEqual(bar.timestamp.date().isoformat(), "2026-01-05")  # that week's Monday
+
+    def test_resample_monthly_groups_by_calendar_month(self):
+        daily = [
+            self._daily(28, 100, 101, 99, 100, 500),
+            self._daily(29, 100, 102, 98, 101, 500),
+            self._daily(30, 101, 103, 100, 102, 500),
+        ]
+        monthly = resample(daily, "1mo")
+        self.assertEqual(len(monthly), 1)
+        self.assertEqual(monthly[0].timestamp.date().isoformat(), "2026-01-01")
+
+    def test_resample_splits_across_period_boundary(self):
+        daily = [self._daily(5, 100, 101, 99, 100, 100), self._daily(12, 100, 101, 99, 100, 100)]  # different ISO weeks
+        weekly = resample(daily, "1w")
+        self.assertEqual(len(weekly), 2)
+
+    def test_resample_rejects_unknown_period(self):
+        with self.assertRaises(ValueError):
+            resample([], "1y")
+
+
+class GetBarsTest(TestCase):
+    """get_bars() is the shared real-vs-derived routing used by both the
+    stats panel and the chart API — test the routing itself here."""
+
+    def setUp(self):
+        self.instrument = Instrument.objects.create(
+            internal_id="NSE_EQ_GETBARS", symbol="GETBARS", name="GetBars Co", exchange="NSE",
+        )
+        base = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=20)
+        for i in range(20):
+            Candle.objects.create(
+                instrument=self.instrument, timeframe="1d", timestamp=base + timedelta(days=i),
+                open=100, high=101, low=99, close=100 + i, volume=100, source="stub",
+            )
+
+    def test_direct_timeframe_returns_stored_candles(self):
+        bars = get_bars(self.instrument, "1d")
+        self.assertEqual(len(bars), 20)
+
+    def test_derived_timeframe_resamples_from_daily(self):
+        bars = get_bars(self.instrument, "1w")
+        self.assertGreater(len(bars), 0)
+        self.assertLess(len(bars), 20)  # fewer weekly bars than daily bars
+
+    def test_derived_timeframe_with_no_daily_data_is_empty(self):
+        empty_instrument = Instrument.objects.create(
+            internal_id="NSE_EQ_NODATA", symbol="NODATA", name="No Data Co", exchange="NSE",
+        )
+        self.assertEqual(get_bars(empty_instrument, "1w"), [])
+
+
+class FyersAdapterRetryTest(TestCase):
+    """Confirms the 429 retry/backoff added after hitting real rate limits
+    during Milestone 2 testing actually retries instead of giving up."""
+
+    @override_settings(FYERS_CLIENT_ID="test-id", FYERS_ACCESS_TOKEN="test-token")
+    @patch("marketdata.broker.fyers_adapter.time.sleep")  # don't actually wait in tests
+    @patch("marketdata.broker.fyers_adapter.fyersModel.FyersModel")
+    def test_retries_on_429_then_succeeds(self, mock_fyers_model, mock_sleep):
+        from marketdata.broker.fyers_adapter import FyersAdapter
+
+        mock_client = MagicMock()
+        mock_client.history.side_effect = [
+            {"s": "error", "code": 429, "message": "request limit reached"},
+            {"s": "error", "code": 429, "message": "request limit reached"},
+            {"s": "ok", "candles": [[1735689600, 100, 101, 99, 100.5, 1000]]},
+        ]
+        mock_fyers_model.return_value = mock_client
+
+        adapter = FyersAdapter()
+        bars = adapter.get_historical_candles(
+            "NSE:TEST-EQ", "1d",
+            datetime(2025, 1, 1, tzinfo=dt_timezone.utc), datetime(2025, 1, 2, tzinfo=dt_timezone.utc),
+        )
+
+        self.assertEqual(mock_client.history.call_count, 3)
+        self.assertEqual(len(bars), 1)
+
+    @override_settings(FYERS_CLIENT_ID="test-id", FYERS_ACCESS_TOKEN="test-token")
+    @patch("marketdata.broker.fyers_adapter.fyersModel.FyersModel")
+    def test_derived_timeframe_raises_clear_error(self, mock_fyers_model):
+        from marketdata.broker.fyers_adapter import FyersAdapter
+
+        adapter = FyersAdapter()
+        with self.assertRaises(ValueError):
+            adapter.get_historical_candles(
+                "NSE:TEST-EQ", "1w",
+                datetime(2025, 1, 1, tzinfo=dt_timezone.utc), datetime(2025, 1, 2, tzinfo=dt_timezone.utc),
+            )
+
+
+class WatchlistToggleViewTest(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(username="tester2", password="testpass123")
+        self.client.force_login(self.user)
+        self.instrument = Instrument.objects.create(
+            internal_id="NSE_EQ_WATCH", symbol="WATCH", name="Watch Co", exchange="NSE",
+        )
+
+    def test_toggle_adds_then_removes(self):
+        url = reverse("marketdata:watchlist_toggle")
+
+        response = self.client.post(url, {"internal_id": self.instrument.internal_id})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["watchlisted"])
+        self.assertTrue(WatchlistItem.objects.filter(instrument=self.instrument).exists())
+
+        response = self.client.post(url, {"internal_id": self.instrument.internal_id})
+        self.assertFalse(response.json()["watchlisted"])
+        self.assertFalse(WatchlistItem.objects.filter(instrument=self.instrument).exists())
+
+    def test_toggle_requires_login(self):
+        self.client.logout()
+        response = self.client.post(reverse("marketdata:watchlist_toggle"), {"internal_id": self.instrument.internal_id})
+        self.assertEqual(response.status_code, 302)

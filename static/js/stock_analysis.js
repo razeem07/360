@@ -26,8 +26,22 @@
         wickUpColor: "#3fb950",
         wickDownColor: "#f85149",
     });
-    const sma20Series = chart.addLineSeries({ color: "#58a6ff", lineWidth: 1 });
-    const ema50Series = chart.addLineSeries({ color: "#d29922", lineWidth: 1 });
+    const overlaySeries = {
+        sma20: chart.addLineSeries({ color: "#58a6ff", lineWidth: 1 }),
+        ema50: chart.addLineSeries({ color: "#d29922", lineWidth: 1 }),
+        ema200: chart.addLineSeries({ color: "#f85149", lineWidth: 1 }),
+        vwap20: chart.addLineSeries({ color: "#a371f7", lineWidth: 1, lineStyle: 2 }),
+    };
+
+    // Indicator show/hide toggles — purely client-side, all series are
+    // already fetched in the one candle-API response.
+    document.querySelectorAll(".indicator-toggles input[data-series]").forEach((checkbox) => {
+        const series = overlaySeries[checkbox.dataset.series];
+        if (!series) return;
+        checkbox.addEventListener("change", () => {
+            series.applyOptions({ visible: checkbox.checked });
+        });
+    });
 
     function resize() {
         chart.resize(container.clientWidth, container.clientHeight);
@@ -38,8 +52,10 @@
         .then((res) => res.json())
         .then((data) => {
             candleSeries.setData(data.bars);
-            sma20Series.setData(data.sma20);
-            ema50Series.setData(data.ema50);
+            overlaySeries.sma20.setData(data.sma20);
+            overlaySeries.ema50.setData(data.ema50);
+            overlaySeries.ema200.setData(data.ema200);
+            overlaySeries.vwap20.setData(data.vwap20);
             chart.timeScale().fitContent();
             resize();
         })

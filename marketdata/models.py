@@ -78,3 +78,19 @@ class Candle(models.Model):
 
     def __str__(self):
         return f"{self.instrument.internal_id} {self.timeframe} {self.timestamp.isoformat()}"
+
+
+class WatchlistItem(models.Model):
+    """
+    One instrument on the (single-user — this is a personal-use app per PRD
+    §1/§3, not multi-tenant) watchlist shown on the Stock Analysis page.
+    """
+
+    instrument = models.OneToOneField(Instrument, on_delete=models.CASCADE, related_name="watchlist_entry")
+    added_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["instrument__symbol"]
+
+    def __str__(self):
+        return self.instrument.internal_id

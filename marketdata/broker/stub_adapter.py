@@ -6,7 +6,7 @@ Exists to exercise the broker-abstraction acceptance check (CLAUDE.md rule 1
 not require touching anything outside marketdata/ and execution/.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone as dt_timezone
 from decimal import Decimal
 
 from django.utils import timezone
@@ -26,7 +26,7 @@ class StubAdapter(BrokerAdapter):
         while ts < to_dt:
             bars.append(
                 CandleBar(
-                    timestamp=timezone.make_aware(ts, timezone.utc) if timezone.is_naive(ts) else ts,
+                    timestamp=timezone.make_aware(ts, dt_timezone.utc) if timezone.is_naive(ts) else ts,
                     open=price,
                     high=price + Decimal("1.0"),
                     low=price - Decimal("1.0"),

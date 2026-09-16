@@ -9,6 +9,7 @@ one with `python manage.py fyers_login` and put it in FYERS_ACCESS_TOKEN in
 """
 
 import logging
+import time
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
@@ -16,6 +17,7 @@ import requests
 from django.conf import settings
 from fyers_apiv3 import fyersModel
 
+from ..resampling import DERIVED_TIMEFRAMES
 from .base import BrokerAdapter, CandleBar, InstrumentInfo, Tick
 
 logger = logging.getLogger(__name__)
@@ -28,9 +30,16 @@ _RESOLUTION_MAP = {
     "5m": ("5", 100),
     "15m": ("15", 100),
     "30m": ("30", 100),
-    "60m": ("60", 100),
+    "1h": ("60", 100),
+    "4h": ("240", 100),
     "1d": ("D", 366),
 }
+
+# Small delay between chunk requests so a normal multi-chunk pull doesn't
+# trip Fyers' rate limit in the first place; retry count/backoff for when it
+# does anyway (observed in practice pulling ~10 years of daily history).
+_CHUNK_REQUEST_DELAY_SECONDS = 0.25
+_RATE_LIMIT_RETRY_DELAYS = [1, 2, 4]
 
 # Fyers publishes a per-exchange symbol master CSV. We only need NSE Capital
 # Market (equities) for Phase 1's NIFTY 50 scope (PRD §4).
@@ -61,13 +70,23 @@ class FyersAdapter(BrokerAdapter):
     def get_historical_candles(
         self, broker_symbol: str, interval: str, from_dt: datetime, to_dt: datetime
     ) -> list[CandleBar]:
+        if interval in DERIVED_TIMEFRAMES:
+            raise ValueError(
+                f"{interval!r} is derived from daily candles (marketdata/resampling.py), "
+                "not fetched from Fyers directly — ingest '1d' instead."
+            )
         if interval not in _RESOLUTION_MAP:
             raise ValueError(f"Unsupported interval {interval!r}; supported: {sorted(_RESOLUTION_MAP)}")
         resolution, chunk_days = _RESOLUTION_MAP[interval]
 
         bars: list[CandleBar] = []
         chunk_start = from_dt
+        first_request = True
         while chunk_start < to_dt:
+            if not first_request:
+                time.sleep(_CHUNK_REQUEST_DELAY_SECONDS)
+            first_request = False
+
             chunk_end = min(chunk_start + timedelta(days=chunk_days), to_dt)
             payload = {
                 "symbol": broker_symbol,
@@ -77,7 +96,7 @@ class FyersAdapter(BrokerAdapter):
                 "range_to": chunk_end.strftime("%Y-%m-%d"),
                 "cont_flag": "1",
             }
-            response = self._client.history(data=payload)
+            response = self._request_history_with_retry(payload)
             if response.get("s") != "ok":
                 logger.warning(
                     "Fyers history request failed for %s [%s..%s]: %s",
@@ -93,6 +112,23 @@ class FyersAdapter(BrokerAdapter):
             chunk_start = chunk_end
 
         return bars
+
+    def _request_history_with_retry(self, payload: dict) -> dict:
+        """
+        Fyers returns {"code": 429, "s": "error", ...} when a client sends
+        requests too fast. Retry with backoff before giving up — without
+        this, pulling several years of daily history in one command (many
+        chunked requests back-to-back) reliably trips the limit partway
+        through, silently leaving gaps in the ingested data.
+        """
+        response = self._client.history(data=payload)
+        for delay in _RATE_LIMIT_RETRY_DELAYS:
+            if response.get("code") != 429:
+                break
+            logger.info("Fyers rate limit hit for %s, retrying in %ss", payload["symbol"], delay)
+            time.sleep(delay)
+            response = self._client.history(data=payload)
+        return response
 
     @staticmethod
     def _parse_candle_row(row) -> CandleBar | None:
@@ -189,6 +225,6 @@ class FyersAdapter(BrokerAdapter):
 
 
 def _from_epoch(epoch_seconds: int) -> datetime:
-    from django.utils import timezone
+    from datetime import timezone as dt_timezone
 
-    return timezone.make_aware(datetime.utcfromtimestamp(epoch_seconds), timezone.utc)
+    return datetime.fromtimestamp(epoch_seconds, tz=dt_timezone.utc)

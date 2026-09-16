@@ -13,6 +13,15 @@ from fyers_apiv3 import fyersModel
 class Command(BaseCommand):
     help = "Walk through the Fyers OAuth flow and print an access token to place in .env."
 
+    def add_arguments(self, parser):
+        parser.add_argument(
+            "--code",
+            help=(
+                "Skip the interactive prompt and exchange this auth_code directly "
+                "(useful when driving this command from a non-interactive shell)."
+            ),
+        )
+
     def handle(self, *args, **options):
         if not (settings.FYERS_CLIENT_ID and settings.FYERS_SECRET_KEY and settings.FYERS_REDIRECT_URI):
             raise CommandError(
@@ -34,7 +43,10 @@ class Command(BaseCommand):
             "2. You'll be redirected to your FYERS_REDIRECT_URI with an "
             "'auth_code' query parameter — copy just that value."
         )
-        auth_code = input("Paste auth_code here: ").strip()
+
+        auth_code = options.get("code")
+        if not auth_code:
+            auth_code = input("Paste auth_code here: ").strip()
         if not auth_code:
             raise CommandError("No auth_code provided.")
 

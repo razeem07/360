@@ -3,6 +3,11 @@ Glue between the ORM (Candle queryset) and the pure indicator functions in
 indicators.py. This is the only place in marketdata/ that both touches the
 database and calls indicators — indicators.py itself stays DB-free and
 independently testable.
+
+get_bars() is the single place that decides whether a timeframe is queried
+directly or resampled from daily candles (marketdata/resampling.py) — both
+build_stock_analysis() (the stats panel) and CandleDataAPIView (the chart)
+call it, so they can never disagree about what a "weekly bar" is.
 """
 
 from dataclasses import dataclass
@@ -11,6 +16,7 @@ from . import indicators
 from .constants import NIFTY50_INDEX_INTERNAL_ID
 from .indicators import Bar
 from .models import Candle, Instrument
+from .resampling import DERIVED_TIMEFRAMES, PlainBar, resample
 
 RELATIVE_STRENGTH_LOOKBACK_DAYS = 20
 
@@ -30,6 +36,8 @@ class StockAnalysis:
     sma20: float | None
     sma50: float | None
     ema50: float | None
+    ema200: float | None
+    vwap20: float | None
     trend: str
     support: list[float]
     resistance: list[float]
@@ -37,31 +45,46 @@ class StockAnalysis:
     relative_strength_note: str | None
 
 
-def _bars_for(instrument: Instrument, timeframe: str) -> list[Candle]:
-    return list(
-        Candle.objects.filter(instrument=instrument, timeframe=timeframe).order_by("timestamp")
+def _to_plain_bar(c: Candle) -> PlainBar:
+    return PlainBar(
+        timestamp=c.timestamp, open=float(c.open), high=float(c.high),
+        low=float(c.low), close=float(c.close), volume=c.volume,
     )
 
 
-def _closes(candles: list[Candle]) -> list[float]:
-    return [float(c.close) for c in candles]
+def get_bars(instrument: Instrument, timeframe: str) -> list[PlainBar]:
+    """
+    The single entry point for "give me this instrument's bars at this
+    timeframe" — resamples from '1d' for derived timeframes (weekly/
+    monthly), otherwise queries Candle directly at the requested timeframe.
+    """
+    if timeframe in DERIVED_TIMEFRAMES:
+        daily = Candle.objects.filter(instrument=instrument, timeframe="1d").order_by("timestamp")
+        return resample([_to_plain_bar(c) for c in daily], timeframe)
+
+    candles = Candle.objects.filter(instrument=instrument, timeframe=timeframe).order_by("timestamp")
+    return [_to_plain_bar(c) for c in candles]
 
 
-def _period_return(candles: list[Candle], lookback_days: int) -> float | None:
-    if len(candles) < lookback_days + 1:
+def _closes(bars: list[PlainBar]) -> list[float]:
+    return [b.close for b in bars]
+
+
+def _period_return(bars: list[PlainBar], lookback_periods: int) -> float | None:
+    if len(bars) < lookback_periods + 1:
         return None
-    start = candles[-(lookback_days + 1)]
-    end = candles[-1]
+    start = bars[-(lookback_periods + 1)]
+    end = bars[-1]
     if start.close == 0:
         return None
-    return float((end.close - start.close) / start.close * 100)
+    return (end.close - start.close) / start.close * 100
 
 
-def _relative_strength(instrument: Instrument, candles: list[Candle], timeframe: str) -> tuple[float | None, str | None]:
+def _relative_strength(instrument: Instrument, bars: list[PlainBar], timeframe: str) -> tuple[float | None, str | None]:
     if instrument.internal_id == NIFTY50_INDEX_INTERNAL_ID:
         return None, "This is the benchmark index itself."
 
-    stock_return = _period_return(candles, RELATIVE_STRENGTH_LOOKBACK_DAYS)
+    stock_return = _period_return(bars, RELATIVE_STRENGTH_LOOKBACK_DAYS)
     if stock_return is None:
         return None, "Not enough history for this stock yet."
 
@@ -70,8 +93,8 @@ def _relative_strength(instrument: Instrument, candles: list[Candle], timeframe:
     except Instrument.DoesNotExist:
         return None, "NIFTY 50 index instrument not seeded — run seed_instruments."
 
-    index_candles = _bars_for(index_instrument, timeframe)
-    index_return = _period_return(index_candles, RELATIVE_STRENGTH_LOOKBACK_DAYS)
+    index_bars = get_bars(index_instrument, timeframe)
+    index_return = _period_return(index_bars, RELATIVE_STRENGTH_LOOKBACK_DAYS)
     if index_return is None:
         return None, "NIFTY 50 index has no ingested candles yet — run ingest_candles for it."
 
@@ -79,20 +102,23 @@ def _relative_strength(instrument: Instrument, candles: list[Candle], timeframe:
 
 
 def build_stock_analysis(instrument: Instrument, timeframe: str = "1d") -> StockAnalysis:
-    candles = _bars_for(instrument, timeframe)
+    candles = get_bars(instrument, timeframe)
 
     if not candles:
         return StockAnalysis(
             instrument=instrument, has_data=False, bar_count=0,
             latest_close=None, latest_volume=None, rsi14=None, atr14=None,
             macd_line=None, macd_signal=None, macd_histogram=None,
-            sma20=None, sma50=None, ema50=None, trend=indicators.TREND_INSUFFICIENT_DATA,
+            sma20=None, sma50=None, ema50=None, ema200=None, vwap20=None, trend=indicators.TREND_INSUFFICIENT_DATA,
             support=[], resistance=[], relative_strength=None,
             relative_strength_note="No candles ingested for this instrument yet.",
         )
 
     closes = _closes(candles)
-    bars = [Bar(high=float(c.high), low=float(c.low), close=float(c.close)) for c in candles]
+    bars = [
+        Bar(high=c.high, low=c.low, close=c.close, volume=c.volume)
+        for c in candles
+    ]
 
     rsi_series = indicators.rsi(closes)
     atr_series = indicators.atr(bars)
@@ -100,6 +126,8 @@ def build_stock_analysis(instrument: Instrument, timeframe: str = "1d") -> Stock
     sma20_series = indicators.sma(closes, 20)
     sma50_series = indicators.sma(closes, 50)
     ema50_series = indicators.ema(closes, 50)
+    ema200_series = indicators.ema(closes, 200)
+    vwap20_series = indicators.rolling_vwap(bars, 20)
     trend = indicators.classify_trend(closes)
     sr = indicators.support_resistance(bars)
     relative_strength, relative_strength_note = _relative_strength(instrument, candles, timeframe)
@@ -118,6 +146,8 @@ def build_stock_analysis(instrument: Instrument, timeframe: str = "1d") -> Stock
         sma20=sma20_series[-1],
         sma50=sma50_series[-1],
         ema50=ema50_series[-1],
+        ema200=ema200_series[-1],
+        vwap20=vwap20_series[-1],
         trend=trend,
         support=sr.support,
         resistance=sr.resistance,
