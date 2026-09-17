@@ -20,6 +20,20 @@ from .resampling import DERIVED_TIMEFRAMES, PlainBar, resample
 
 RELATIVE_STRENGTH_LOOKBACK_DAYS = 20
 
+# Timeframes coarse enough that one bar per calendar day (at most) is
+# guaranteed — safe to key by date string for lightweight-charts. Anything
+# finer needs a real UNIX timestamp or same-day bars collide. Shared by
+# every chart-shaping consumer (marketdata's own candle API, strategies'
+# signal-preview markers, ...) so a strategy's entry/exit markers always
+# land on the exact same time key as the candle they fired on.
+DATE_KEYED_TIMEFRAMES = {"1d", "1w", "1mo"}
+
+
+def chart_time(timestamp, timeframe: str):
+    if timeframe in DATE_KEYED_TIMEFRAMES:
+        return timestamp.strftime("%Y-%m-%d")
+    return int(timestamp.timestamp())
+
 
 @dataclass
 class StockAnalysis:

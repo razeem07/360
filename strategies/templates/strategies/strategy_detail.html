@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}{{ strategy.name }} · 360-Algo{% endblock %}
+{% block content %}
+
+<div style="display:flex; justify-content:space-between; align-items:center;">
+    <div>
+        <h2 style="margin-bottom:0.2rem;">{{ strategy.name }}</h2>
+        <p class="desc">
+            {{ strategy.get_category_display }} ·
+            <span class="status-badge {{ strategy.status }}">{{ strategy.get_status_display }}</span>
+            {% if version %}· v{{ version.version_number }}{% if version.is_locked %} (locked){% endif %}{% endif %}
+        </p>
+    </div>
+    <a href="{% url 'strategies:edit' strategy_id=strategy.id %}"><button type="button" style="width:auto; padding:0.5rem 1rem;">Edit</button></a>
+</div>
+
+{% if not version %}
+<div class="card"><p class="desc">No version yet.</p></div>
+{% else %}
+
+<div class="card-grid" style="margin: 1rem 0;">
+    <div class="card">
+        <h3>Entry Rules</h3>
+        <pre style="white-space:pre-wrap; font-size:0.78rem; color:var(--text-muted);">{{ version.entry_rules }}</pre>
+    </div>
+    <div class="card">
+        <h3>Exit Rules</h3>
+        <pre style="white-space:pre-wrap; font-size:0.78rem; color:var(--text-muted);">{{ version.exit_rules }}</pre>
+    </div>
+    <div class="card">
+        <h3>Stop / Target / Trailing</h3>
+        <div class="placeholder" style="text-align:left;">
+            Stop: {{ version.stop_loss.value }} ({{ version.stop_loss.type }})<br>
+            Target: {{ version.target.value }} ({{ version.target.type }})<br>
+            {% if version.trailing_stop %}Trailing: {{ version.trailing_stop.value }} ({{ version.trailing_stop.type }}){% else %}Trailing: none{% endif %}
+        </div>
+    </div>
+    <div class="card">
+        <h3>Sizing &amp; Limits</h3>
+        <div class="placeholder" style="text-align:left;">
+            Sizing: {{ version.position_sizing.value }} ({{ version.position_sizing.type }})<br>
+            Max positions: {{ version.max_positions }} · Max capital: {{ version.max_capital_pct }}%<br>
+            Max risk/trade: {{ version.max_risk_per_trade_pct }}% · Min R:R: {{ version.min_risk_reward }}
+        </div>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:1rem;">
+    <h3>Signal Preview</h3>
+    <p class="desc">Where this version's entry (▲ green) / exit (▼ red) rules would have fired historically. Not a backtest — no P&amp;L, no fees, no position sizing simulated.</p>
+
+    <form method="get" style="margin-bottom: 1rem; display:flex; align-items:center; gap:0.75rem;">
+        <select name="symbol" onchange="this.form.submit()"
+                style="background: var(--bg-elevated); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 0.4rem 0.6rem;">
+            {% for inst in instruments %}
+            <option value="{{ inst.internal_id }}" {% if selected_instrument and inst.internal_id == selected_instrument.internal_id %}selected{% endif %}>
+                {{ inst.symbol }} — {{ inst.name }}
+            </option>
+            {% endfor %}
+        </select>
+        <input type="hidden" name="timeframe" value="{{ timeframe }}">
+    </form>
+
+    <div class="timeframe-tabs">
+        {% for tf, label in available_timeframes %}
+        <a class="timeframe-tab {% if tf == timeframe %}active{% endif %}"
+           href="?symbol={{ selected_instrument.internal_id|urlencode }}&timeframe={{ tf }}">{{ label }}</a>
+        {% endfor %}
+    </div>
+
+    <div id="preview-chart" style="width: 100%; height: 420px;"></div>
+</div>
+
+<script src="{% static 'vendor/lightweight-charts/lightweight-charts.standalone.production.js' %}"></script>
+<script src="{% static 'js/strategy_preview.js' %}"
+        data-candle-api="{% url 'marketdata:candle_api' internal_id=selected_instrument.internal_id %}?timeframe={{ timeframe }}"
+        data-preview-api="{% url 'strategies:preview_api' strategy_id=strategy.id %}?symbol={{ selected_instrument.internal_id|urlencode }}&timeframe={{ timeframe }}"></script>
+{% endif %}
+
+{% endblock %}

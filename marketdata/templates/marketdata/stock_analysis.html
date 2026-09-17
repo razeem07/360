@@ -15,7 +15,7 @@
         <div id="watchlist-list">
             {% for inst in watchlist %}
             <div class="instrument-row" data-internal-id="{{ inst.internal_id }}">
-                <a href="?symbol={{ inst.internal_id }}&timeframe={{ timeframe }}"
+                <a href="?symbol={{ inst.internal_id|urlencode }}&timeframe={{ timeframe }}"
                    class="{% if selected_instrument and inst.internal_id == selected_instrument.internal_id %}active{% endif %}">
                     {{ inst.symbol }}
                 </a>
@@ -35,7 +35,7 @@
         <div class="timeframe-tabs">
             {% for tf, label in available_timeframes %}
             <a class="timeframe-tab {% if tf == timeframe %}active{% endif %}"
-               href="?symbol={{ selected_instrument.internal_id }}&timeframe={{ tf }}">{{ label }}</a>
+               href="?symbol={{ selected_instrument.internal_id|urlencode }}&timeframe={{ tf }}">{{ label }}</a>
             {% endfor %}
         </div>
 

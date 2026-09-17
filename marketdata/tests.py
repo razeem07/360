@@ -230,6 +230,19 @@ class StockAnalysisViewTest(TestCase):
         response = self.client.get(url)
         self.assertEqual(response.status_code, 403)
 
+    def test_symbol_containing_ampersand_does_not_break_query_links(self):
+        # Regression: M&M's internal_id literally contains "&" — an
+        # unescaped f"?symbol={internal_id}&timeframe=..." link splits into
+        # two query params instead of one, corrupting the symbol. The
+        # timeframe-tab/watchlist links must urlencode it.
+        instrument = Instrument.objects.create(
+            internal_id="NSE_EQ_M&M", symbol="M&M", name="Mahindra & Mahindra", exchange="NSE",
+        )
+        response = self.client.get(reverse("marketdata:stock_analysis"), {"symbol": instrument.internal_id})
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "symbol=NSE_EQ_M%26M&timeframe=")
+        self.assertNotContains(response, "symbol=NSE_EQ_M&M&timeframe=")
+
 
 class ResamplingTest(TestCase):
     """resampling.py is pure Python — no DB needed."""

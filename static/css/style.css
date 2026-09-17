@@ -37,7 +37,7 @@ a:hover { text-decoration: underline; }
 
 .nav-links { display: flex; gap: 1.25rem; flex-wrap: wrap; }
 
-.mode-badge {
+.mode-badge, .status-badge {
     padding: 0.15rem 0.6rem;
     border-radius: 4px;
     font-size: 0.75rem;
@@ -46,6 +46,10 @@ a:hover { text-decoration: underline; }
     border: 1px solid var(--border);
 }
 .mode-badge.BACKTEST { color: var(--text-muted); }
+
+.status-badge.draft { color: var(--text-muted); }
+.status-badge.active { color: var(--green); border-color: var(--green); }
+.status-badge.archived { color: var(--text-muted); border-style: dashed; }
 .mode-badge.PAPER { color: var(--amber); border-color: var(--amber); }
 .mode-badge.LIVE { color: var(--red); border-color: var(--red); }
 

@@ -6,7 +6,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from . import indicators
-from .analysis import build_stock_analysis, get_bars
+from .analysis import build_stock_analysis, chart_time, get_bars
 from .models import Instrument, WatchlistItem
 from .resampling import DERIVED_TIMEFRAMES
 
@@ -17,17 +17,6 @@ TIMEFRAME_LABELS = {
     "1d": "Daily", "1w": "Weekly", "1mo": "Monthly",
 }
 DEFAULT_TIMEFRAME = "1d"
-
-# Timeframes coarse enough that one bar per calendar day (at most) is
-# guaranteed — safe to key by date string for lightweight-charts. Anything
-# finer needs a real UNIX timestamp or same-day bars collide.
-_DATE_KEYED_TIMEFRAMES = {"1d", "1w", "1mo"}
-
-
-def _chart_time(timestamp, timeframe):
-    if timeframe in _DATE_KEYED_TIMEFRAMES:
-        return timestamp.strftime("%Y-%m-%d")
-    return int(timestamp.timestamp())
 
 
 class StockAnalysisView(LoginRequiredMixin, View):
@@ -107,7 +96,7 @@ class CandleDataAPIView(APIView):
             timeframe = DEFAULT_TIMEFRAME
 
         candles = get_bars(instrument, timeframe)  # shared with build_stock_analysis()
-        times = [_chart_time(c.timestamp, timeframe) for c in candles]
+        times = [chart_time(c.timestamp, timeframe) for c in candles]
         closes = [c.close for c in candles]
         indicator_bars = [
             indicators.Bar(high=c.high, low=c.low, close=c.close, volume=c.volume) for c in candles

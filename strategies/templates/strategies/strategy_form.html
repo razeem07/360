@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}{% if strategy %}Edit{% else %}New{% endif %} Strategy · 360-Algo{% endblock %}
+{% block content %}
+
+<h2>{% if strategy %}Edit "{{ strategy.name }}"{% else %}New Strategy{% endif %}</h2>
+
+{% if error %}<ul class="errorlist"><li>{{ error }}</li></ul>{% endif %}
+{% if version.is_locked %}
+<div class="card" style="margin-bottom:1rem;"><p class="desc">This version has been used in a backtest and is locked — saving will create version {{ version.version_number|add:1 }} instead of changing v{{ version.version_number }}.</p></div>
+{% endif %}
+
+<form method="post" id="strategy-form" action="{% if strategy %}{% url 'strategies:edit' strategy_id=strategy.id %}{% else %}{% url 'strategies:create' %}{% endif %}">
+    {% csrf_token %}
+
+    <div class="card" style="margin-bottom:1rem;">
+        <h3>Basics</h3>
+        <div class="field">
+            <label for="name">Name</label>
+            <input type="text" name="name" id="name" value="{{ strategy.name|default:'' }}" required>
+        </div>
+        <div class="field">
+            <label for="category">Category</label>
+            <select name="category" id="category">
+                {% for value, label in category_choices %}
+                <option value="{{ value }}" {% if strategy.category == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
+
+    <div class="card" style="margin-bottom:1rem;">
+        <h3>Entry Rules</h3>
+        <div class="field">
+            <label>Combine conditions with</label>
+            <select id="entry-combinator">
+                <option value="all">ALL (AND)</option>
+                <option value="any">ANY (OR)</option>
+            </select>
+        </div>
+        <div id="entry-conditions"></div>
+        <button type="button" class="rule-add-btn" data-target="entry" style="width:auto; padding:0.4rem 0.8rem; margin-top:0.5rem;">+ Add Condition</button>
+    </div>
+
+    <div class="card" style="margin-bottom:1rem;">
+        <h3>Exit Rules</h3>
+        <div class="field">
+            <label>Combine conditions with</label>
+            <select id="exit-combinator">
+                <option value="all">ALL (AND)</option>
+                <option value="any">ANY (OR)</option>
+            </select>
+        </div>
+        <div id="exit-conditions"></div>
+        <button type="button" class="rule-add-btn" data-target="exit" style="width:auto; padding:0.4rem 0.8rem; margin-top:0.5rem;">+ Add Condition</button>
+    </div>
+
+    <div class="card" style="margin-bottom:1rem;">
+        <h3>Stop / Target / Trailing Stop</h3>
+        <div class="card-grid">
+            <div>
+                <label>Stop Loss</label>
+                <div style="display:flex; gap:0.4rem;">
+                    <select name="stop_loss_type">
+                        <option value="pct" {% if version.stop_loss.type == "pct" %}selected{% endif %}>% below entry</option>
+                        <option value="atr" {% if version.stop_loss.type == "atr" %}selected{% endif %}>x ATR(14)</option>
+                    </select>
+                    <input type="number" step="0.01" name="stop_loss_value" value="{{ version.stop_loss.value|default:'2' }}" required>
+                </div>
+            </div>
+            <div>
+                <label>Target</label>
+                <div style="display:flex; gap:0.4rem;">
+                    <select name="target_type">
+                        <option value="pct" {% if version.target.type == "pct" %}selected{% endif %}>% above entry</option>
+                        <option value="rr" {% if version.target.type == "rr" %}selected{% endif %}>Risk:Reward multiple</option>
+                    </select>
+                    <input type="number" step="0.01" name="target_value" value="{{ version.target.value|default:'4' }}" required>
+                </div>
+            </div>
+            <div>
+                <label>Trailing Stop (optional)</label>
+                <div style="display:flex; gap:0.4rem;">
+                    <select name="trailing_stop_type">
+                        <option value="">None</option>
+                        <option value="pct" {% if version.trailing_stop.type == "pct" %}selected{% endif %}>% trailing</option>
+                        <option value="atr" {% if version.trailing_stop.type == "atr" %}selected{% endif %}>x ATR(14) trailing</option>
+                    </select>
+                    <input type="number" step="0.01" name="trailing_stop_value" value="{{ version.trailing_stop.value|default:'' }}">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card" style="margin-bottom:1rem;">
+        <h3>Position Sizing &amp; Risk Limits</h3>
+        <div class="card-grid">
+            <div>
+                <label>Position Sizing</label>
+                <div style="display:flex; gap:0.4rem;">
+                    <select name="position_sizing_type">
+                        <option value="fixed_pct" {% if version.position_sizing.type == "fixed_pct" %}selected{% endif %}>% of capital</option>
+                        <option value="risk_based" {% if version.position_sizing.type == "risk_based" %}selected{% endif %}>Risk-based (qty from stop distance)</option>
+                    </select>
+                    <input type="number" step="0.01" name="position_sizing_value" value="{{ version.position_sizing.value|default:'10' }}" required>
+                </div>
+            </div>
+            <div class="field">
+                <label for="max_positions">Max Open Positions</label>
+                <input type="number" name="max_positions" id="max_positions" value="{{ version.max_positions|default:'1' }}" required>
+            </div>
+            <div class="field">
+                <label for="max_capital_pct">Max Capital Deployed (%)</label>
+                <input type="number" step="0.01" name="max_capital_pct" id="max_capital_pct" value="{{ version.max_capital_pct|default:'100' }}" required>
+            </div>
+            <div class="field">
+                <label for="max_risk_per_trade_pct">Max Risk Per Trade (%)</label>
+                <input type="number" step="0.01" name="max_risk_per_trade_pct" id="max_risk_per_trade_pct" value="{{ version.max_risk_per_trade_pct|default:'1' }}" required>
+            </div>
+            <div class="field">
+                <label for="min_risk_reward">Min Risk:Reward</label>
+                <input type="number" step="0.01" name="min_risk_reward" id="min_risk_reward" value="{{ version.min_risk_reward|default:'1' }}" required>
+            </div>
+        </div>
+        <div class="field">
+            <label for="notes">Notes</label>
+            <input type="text" name="notes" id="notes" value="{{ version.notes|default:'' }}">
+        </div>
+    </div>
+
+    <input type="hidden" name="entry_rules_json" id="entry_rules_json">
+    <input type="hidden" name="exit_rules_json" id="exit_rules_json">
+    <button type="submit" style="width:auto; padding:0.6rem 1.5rem;">Save Strategy</button>
+</form>
+
+{{ version.entry_rules|default:"null"|json_script:"initial-entry-rules" }}
+{{ version.exit_rules|default:"null"|json_script:"initial-exit-rules" }}
+<script src="{% static 'js/strategy_form.js' %}"></script>
+
+{% endblock %}

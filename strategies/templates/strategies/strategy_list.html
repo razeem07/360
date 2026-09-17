@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Strategies · 360-Algo{% endblock %}
+{% block content %}
+
+<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+    <h2 style="margin:0;">Strategies</h2>
+    <a href="{% url 'strategies:create' %}"><button type="button" style="width:auto; padding:0.5rem 1rem;">+ New Strategy</button></a>
+</div>
+
+{% if not strategies %}
+<div class="card"><p class="desc">No strategies yet. Create one to get started.</p></div>
+{% else %}
+<div class="card-grid">
+    {% for s in strategies %}
+    <div class="card">
+        <h3><a href="{% url 'strategies:detail' strategy_id=s.id %}">{{ s.name }}</a></h3>
+        <p class="desc">
+            {{ s.get_category_display }} ·
+            <span class="status-badge {{ s.status }}">{{ s.get_status_display }}</span>
+            · v{{ s.latest_version.version_number|default:"—" }}
+        </p>
+        <div style="display:flex; gap:0.4rem; flex-wrap:wrap;">
+            <a href="{% url 'strategies:edit' strategy_id=s.id %}"><button type="button" style="width:auto; padding:0.3rem 0.6rem; font-size:0.8rem;">Edit</button></a>
+            <form method="post" action="{% url 'strategies:duplicate' strategy_id=s.id %}" style="display:inline;">
+                {% csrf_token %}
+                <button type="submit" style="width:auto; padding:0.3rem 0.6rem; font-size:0.8rem;">Duplicate</button>
+            </form>
+            {% if s.status != 'active' %}
+            <form method="post" action="{% url 'strategies:set_status' strategy_id=s.id new_status='active' %}" style="display:inline;">
+                {% csrf_token %}
+                <button type="submit" style="width:auto; padding:0.3rem 0.6rem; font-size:0.8rem;">Activate</button>
+            </form>
+            {% endif %}
+            {% if s.status != 'archived' %}
+            <form method="post" action="{% url 'strategies:set_status' strategy_id=s.id new_status='archived' %}" style="display:inline;">
+                {% csrf_token %}
+                <button type="submit" style="width:auto; padding:0.3rem 0.6rem; font-size:0.8rem;">Archive</button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+{% endblock %}
